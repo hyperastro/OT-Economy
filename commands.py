@@ -158,18 +158,20 @@ def check_post_for_commands(postList):
         dequoted_text = strip_quotes_stack(raw_text)
 
         for pattern, handler in COMMANDS:
-            for match in re.finditer(pattern, dequoted_text, flags=re.IGNORECASE):
-                args = [arg for arg in match.groups() if arg is not None]
-                command_queue.append({
-                    "post_id": post.get("id"),
-                    "topic_id": post.get("topic_id"),
-                    "user_id": post.get("user_id"),
-                    "command": handler.__name__,
-                    "username": "".join(API.get_username(post.get("user_id")).split()),
-                    "args": args,
-                    "raw": match.group(0).strip(),
-                    "handler": handler
-                })
+            for line in dequoted_text.split("\n"):
+                for match in re.finditer(pattern, line, flags=re.IGNORECASE):
+                    args = [arg for arg in match.groups() if arg is not None]
+                    args = [arg[1:-1] if arg != '' and arg[0] in "'\"" else arg for arg in args]  # Remove '' and "" around string args
+                    command_queue.append({
+                        "post_id": post.get("id"),
+                        "topic_id": post.get("topic_id"),
+                        "user_id": post.get("user_id"),
+                        "command": handler.__name__,
+                        "username": "",#.join(API.get_username(post.get("user_id")).split()),
+                        "args": args,
+                        "raw": match.group(0).strip(),
+                        "handler": handler
+                    })
     return command_queue
 
 
@@ -437,16 +439,17 @@ def cmd_invest(args, user_id, username, topic_id=None):
 
 
 # === COMMAND REGEX ===
-COMMANDS = [
-    (r"!register\b", cmd_register),
-    (r"!give\s+(\d+)\s+(\S+)", cmd_give),
-    (r"!item\s+create\s+(\S+)(?:\s+(\d+))?", cmd_item_create),
-    (r"!item\s+give\s+(\S+)\s+(\S+)(?:\s+(\d+))?", cmd_item_give),
-    (r"!item\s+delete\s+(\S+)\s+(\d+)(?:\s+(\d+))?", cmd_item_delete),
-    (r"!item\s+upgrade\s+rarity\s+(\S+)\s+(\d+)(?:\s+(\d+))?", cmd_item_upgrade),
-    (r"!invest\s+(\d+)\s+(\d+)\s+(\d+)", cmd_invest),
+UINT_REGEX = r"(\d+)"  # regex taking a positive number or 0
+STR_REGEX = r"((?:\")[^\"\v\f\r]+(?:\")|(?:')[^\'\v\f\r]+(?:')|[^\"']\S+)"  # regex allowing a single word or single-line between '' and ""
+COMMANDS: list[tuple[str, str]] = [  # replaced handlers by None to avoid API calls
+    (r"^\s*!register\s*$", "cmd_register"),
+    (r"^\s*!give\s+" + UINT_REGEX + r"\s+" + STR_REGEX + r"\s*$", "cmd_give"),
+    (r"^\s*!item\s+create\s+" + STR_REGEX + r"(?:\s+" + UINT_REGEX + r")?\s*$", "cmd_item_create"),
+    (r"^\s*!item\s+give\s+" + STR_REGEX + r"\s+" + STR_REGEX + r"(?:\s+" + UINT_REGEX + r")?\s*$", "cmd_item_give"),
+    (r"^\s*!item\s+delete\s+" + STR_REGEX + r"\s+" + UINT_REGEX + r"(?:\s+" + UINT_REGEX + r")?\s*$", "cmd_item_delete"),
+    (r"^\s*!item\s+upgrade\s+rarity\s+" + STR_REGEX + r"\s+" + UINT_REGEX + r"(?:\s+" + UINT_REGEX + r")?\s*$", "cmd_item_upgrade"),
+    (r"^\s*!invest\s+" + UINT_REGEX + r"\s+" + UINT_REGEX + r"\s+" + UINT_REGEX+ r"\s*$", "cmd_invest"),
 ]
-
 
 # === QUEUE PROCESSING ===
 def process_command_queue(queue):
