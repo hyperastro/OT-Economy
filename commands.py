@@ -36,6 +36,15 @@ RARITY_ORDER = [
     ("legendary", 10000),
     ("sacred", None),  # no upgrades beyond sacred
 ]
+
+# Total OT Bucks invested per item unit at each rarity (creation + all upgrades to reach it)
+RARITY_TOTAL_COST = {
+    "common":    1,        # 1 (creation)
+    "rare":      101,      # 1 + 100
+    "exotic":    451,      # 1 + 100 + 350
+    "legendary": 1951,     # 1 + 100 + 350 + 1500
+    "sacred":    11951,    # 1 + 100 + 350 + 1500 + 10000
+}
 command_queue = []
 
 
@@ -100,7 +109,7 @@ def find_user_by_name(db, username):
     return None
 
 def next_stack_id(items, item_name):
-    same_items = [it for it in items if it["name"] == item_name]
+    same_items = [it for it in items if it["name"].lower() == item_name.lower()]
     if not same_items:
         return "0001"
     max_id = max(int(it["stack_id"]) for it in same_items)
@@ -225,11 +234,11 @@ def cmd_give(args, user_id, username, topic_id=None):
 
 
 def cmd_item_create(args, user_id, username, topic_id=None):
-    item_name = args[0].strip().lower()
+    item_name = args[0].strip()
     qty = int(args[1]) if len(args) > 1 else 1
     db = load_db()
 
-    if item_name in BLACKLISTED_ITEMS:
+    if item_name.lower() in [b.lower() for b in BLACKLISTED_ITEMS]:
         print("⚠️ This item name is blacklisted.")
         return False
     user = db.get(str(user_id))
@@ -270,7 +279,7 @@ def cmd_item_give(args, user_id, username, topic_id=None):
 
     match = None
     for item in sender["items"]:
-        if item["name"] == item_name and (stack_id is None or item["stack_id"] == stack_id):
+        if item["name"].lower() == item_name.lower() and (stack_id is None or item["stack_id"] == stack_id):
             match = item
             break
     if not match:
@@ -294,15 +303,20 @@ def cmd_item_delete(args, user_id, username, topic_id=None):
         return False
 
     for item in user["items"]:
-        if item["name"] == item_name and item["stack_id"] == stack_id:
+        if item["name"].lower() == item_name.lower() and item["stack_id"] == stack_id:
+            qty_deleted = item["quantity"] if (qty is None or qty >= item["quantity"]) else qty
+            value_per_unit = RARITY_TOTAL_COST.get(item["rarity"].lower(), 1)
+            refund = round(qty_deleted * value_per_unit * 0.5)
+            user["balance"] += refund
+
             if qty is None or qty >= item["quantity"]:
                 user["items"].remove(item)
-                print(f"✅ Deleted stack {stack_id} of {item_name}")
+                print(f"✅ Deleted stack {stack_id} of {item_name} — refunded {refund} OT Bucks")
                 save_db(db)
                 return True
             else:
                 item["quantity"] -= qty
-                print(f"✅ Deleted {qty}x {item_name} from stack {stack_id}")
+                print(f"✅ Deleted {qty_deleted}x {item_name} from stack {stack_id} — refunded {refund} OT Bucks")
                 save_db(db)
                 return True
 
@@ -322,7 +336,7 @@ def cmd_item_upgrade(args, user_id, username, topic_id=None):
         return False
 
     for item in user["items"]:
-        if item["name"] == item_name.lower() and item["stack_id"] == stack_id:
+        if item["name"].lower() == item_name.lower() and item["stack_id"] == stack_id:
             rarity_next = next_rarity(item["rarity"])
             if not rarity_next:
                 print("⚠️ Already at highest rarity.")
@@ -350,16 +364,16 @@ def cmd_invest(args, user_id, username, topic_id=None):
 
     Tiers: 10 / 20 / 30 / 40 / 50  (raw value is rounded DOWN to nearest tier)
     Payouts on success: 3% / 7% / 12% / 25% / 50% of stake (before time scaling)
-    Time scaling per tierfull reward window / half / quarter / max:
-        Tier 10:  ≤12h / ≤24h / ≤36h  - fail if >36h
-        Tier 20:  ≤24h / ≤48h / ≤72h  - fail if >72h
-        Tier 30:  ≤48h / ≤96h / ≤144h - fail if >144h
-        Tier 40:  ≤72h / ≤144h / ≤216h - fail if >216h
-        Tier 50: ≤168h / ≤336h / ≤504h - fail if >504h
+    Time scaling per tier — full reward window / half / quarter / max:
+        Tier 10:  ≤12h / ≤24h / ≤36h  — fail if >36h
+        Tier 20:  ≤24h / ≤48h / ≤72h  — fail if >72h
+        Tier 30:  ≤48h / ≤96h / ≤144h — fail if >144h
+        Tier 40:  ≤72h / ≤144h / ≤216h — fail if >216h
+        Tier 50: ≤168h / ≤336h / ≤504h — fail if >504h
     On failure: refund = round(stake × posters_reached / tier_target)
     """
     if topic_id is None:
-        print("⚠️ !invest could not determine the topic - post may be missing topic context.")
+        print("⚠️ !invest could not determine the topic — post may be missing topic context.")
         return False
 
     if len(args) < 3:
@@ -371,7 +385,7 @@ def cmd_invest(args, user_id, username, topic_id=None):
         raw_tier         = int(args[1])
         time_limit_hours = int(args[2])
     except ValueError:
-        print("⚠️ !invest - all arguments must be whole numbers.")
+        print("⚠️ !invest — all arguments must be whole numbers.")
         return False
 
     if invest_amount <= 0:
