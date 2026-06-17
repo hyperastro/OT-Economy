@@ -440,7 +440,7 @@ def cmd_invest(args, user_id, username, topic_id=None):
 
 # === COMMAND REGEX ===
 UINT_REGEX = r"(\d+)"  # regex taking a positive number or 0
-STR_REGEX = r"((?:\")[^\"\v\f\r]+(?:\")|(?:')[^\'\v\f\r]+(?:')|[^\"']\S+)"  # regex allowing a single word or single-line between '' and ""
+STR_REGEX = r"((?:\")[^\"\v\f\r]+(?:\")|(?:')[^\'\v\f\r]+(?:')|[^\s\"']\S*)"  # regex allowing a single word or single-line between '' and ""
 COMMANDS: list[tuple[str, str]] = [  # replaced handlers by None to avoid API calls
     (r"^\s*!register\s*$", "cmd_register"),
     (r"^\s*!give\s+" + UINT_REGEX + r"\s+" + STR_REGEX + r"\s*$", "cmd_give"),
