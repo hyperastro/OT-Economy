@@ -4,11 +4,14 @@ import os
 import json
 import time
 
-client_id = 
-client_secret = ""
-callback_url = "http://localhost:8727"
-scopes = [Scope.PUBLIC, Scope.FORUM_WRITE]
-api = Ossapi(client_id,client_secret,callback_url,scopes=scopes)
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from config import (
+    CLIENT_ID, CLIENT_SECRET, REDIRECT_URI
+)
+
+
+scopes = [ Scope.PUBLIC, Scope.FORUM_WRITE ]
+api    = Ossapi(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, scopes = scopes)
 
 
 

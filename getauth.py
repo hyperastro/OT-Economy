@@ -6,10 +6,12 @@ import requests
 import json
 import time
 
+from config import (
+    CLIENT_ID, CLIENT_SECRET, REDIRECT_URI
+)
+
 # === CONFIG ===
-CLIENT_ID = 
-CLIENT_SECRET = ""
-REDIRECT_URI = "http://localhost:8727"
+
 AUTH_URL = (
     f"https://osu.ppy.sh/oauth/authorize?"
     f"client_id={CLIENT_ID}"
