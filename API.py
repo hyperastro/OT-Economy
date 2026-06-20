@@ -4,12 +4,14 @@ import os
 import json
 import time
 
-client_id = 
-client_secret = ""
-# No callback_url → client credentials flow. API.py only does reads
-# (forum_topic, user) so FORUM_WRITE and a local OAuth server are
-# never needed here. ForumUpdate.py owns the write-capable api instance.
-api = Ossapi(client_id, client_secret)
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from config import (
+    CLIENT_ID, CLIENT_SECRET, REDIRECT_URI
+)
+
+
+scopes = [ Scope.PUBLIC, Scope.FORUM_WRITE ]
+api    = Ossapi(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, scopes = scopes)
 
 
 
@@ -76,10 +78,10 @@ def save_token(token_data):
 def request_new_token():
     """Request a new OAuth token from osu!"""
     data = {
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "grant_type": "client_credentials",
-        "scope": "public",
+        "client_id"     : CLIENT_ID,
+        "client_secret" : CLIENT_SECRET,
+        "grant_type"    : "client_credentials",
+        "scope"         : "public",
     }
     resp = requests.post(OSU_TOKEN_URL, data=data)
     resp.raise_for_status()

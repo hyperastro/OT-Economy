@@ -5,11 +5,11 @@ import time
 from pathlib import Path
 
 # === osu! API Setup ===
-client_id = 
-client_secret = ""
-callback_url = "http://localhost:8000"
+from config import (
+    CLIENT_ID, CLIENT_SECRET, REDIRECT_URI
+)
 scopes = [Scope.PUBLIC, Scope.FORUM_WRITE]
-api = Ossapi(client_id, client_secret, callback_url, scopes=scopes)
+api    = Ossapi(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, scopes = scopes)
 
 # === Local DB ===
 DB_PATH = Path("database.json")
