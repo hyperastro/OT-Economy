@@ -267,7 +267,10 @@ def cmd_item_create(args, user_id, username, topic_id=None):
     save_db(db)
     print(f"✅ Created {qty}x {item_name} (stack {stack_id}) for {username}")
     return True
-
+    
+def cmd_force_refresh():
+    save_db(db)
+    print("force refresh? i suck at coding")
 
 def cmd_item_give(args, user_id, username, topic_id=None):
     """
