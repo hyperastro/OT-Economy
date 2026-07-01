@@ -105,7 +105,7 @@ def update_leaderboard(db):
         for r, color in rarity_colors.items():
             count = rarity_counts.get(r, 0)
             if count:
-                pct = round(count / total_items * 100)
+                pct = round(count / total_items * 100,2)
                 parts.append(f"[color={color}]{r}: {count} ({pct}%)[/color]")
         rarity_str = " | ".join(parts) if parts else "None"
     else:
