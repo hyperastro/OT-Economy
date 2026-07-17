@@ -1,16 +1,8 @@
 import json
 import random
-import time
 import math
-from pathlib import Path
-
-DB_PATH = Path("database.json")
-INTRO_PATH = Path("post_intro.txt")
-STATE_PATH = Path("bot_state.json")
-SNAPSHOT_PATH = Path("balance_snapshot.json")
-TICKS_PER_WEEK = 40320
-TAX_RATE = 0.03
-TAX_THRESHOLD = 10000
+from DatabaseLogic.db import Database
+import config
 
 
 def save_balance_snapshot(db):
@@ -19,34 +11,19 @@ def save_balance_snapshot(db):
         "saved_at": time.time(),
         "balances": {uid: user.get("balance", 0) for uid, user in db.items()},
     }
-    with open(SNAPSHOT_PATH, "w") as f:
+    with open(config.SNAPSHOT_PATH, "w") as f:
         json.dump(snapshot, f, indent=4)
-    print("📸 Weekly balance snapshot saved.")
+    print("Weekly balance snapshot saved.")
 
-
-
-
-
-
-def load_db():
-    if DB_PATH.exists():
-        with open(DB_PATH, "r") as f:
-            return json.load(f)
-    return {}
-
-
-def save_db(db):
-    with open(DB_PATH, "w") as f:
-        json.dump(db, f, indent=4)
 
 def load_state():
-    if STATE_PATH.exists():
-        with open(STATE_PATH, "r") as f:
+    if config.STATE_PATH.exists():
+        with open(config.STATE_PATH, "r") as f:
             return json.load(f)
     return {"tick_count": 0}
 
 def save_state(state):
-    with open(STATE_PATH, "w") as f:
+    with open(config.STATE_PATH, "w") as f:
         json.dump(state, f, indent=4)
 
 def apply_wealth_tax_tick_based(current_tick):
@@ -54,25 +31,25 @@ def apply_wealth_tax_tick_based(current_tick):
     Applies a 3% wealth tax every 40,320 ticks (~once per week)
     to all users with >10,000 OT Bucks.
     """
-    if current_tick % TICKS_PER_WEEK != 0:
+    if current_tick % config.TICKS_PER_WEEK != 0:
         return  # Not a tax tick yet
 
-    db = load_db()
+    db = Database.load_db()
     taxed_users = []
 
     for uid, user in db.items():
         balance = user.get("balance", 0)
-        if balance > TAX_THRESHOLD:
-            tax_amount = round(balance * TAX_RATE)
+        if balance > config.TAX_THRESHOLD:
+            tax_amount = round(balance * config.TAX_RATE)
             user["balance"] -= tax_amount
             taxed_users.append((user["username"], tax_amount))
-            print(f" Wealth tax: {user['username']} paid {tax_amount} OT Bucks (3%)")
+            print(f"Wealth tax: {user['username']} paid {tax_amount} OT Bucks (3%)")
 
     if taxed_users:
-        save_db(db)
-        print(f"✅ Applied wealth tax to {len(taxed_users)} users this week.")
+        Database.save_db(db)
+        print(f"Applied wealth tax to {len(taxed_users)} users this week.")
     else:
-        print(" No users eligible for wealth tax this week.")
+        print("No users eligible for wealth tax this week.")
 
     # Snapshot after tax so week-over-week gains comparisons are always fair
     save_balance_snapshot(db)
@@ -95,10 +72,10 @@ def maybe_reward_user(user_id):
     - Sacred items also increase reward chance.
     - Rapid posting is penalised via a rolling 10-minute window (β=0.75).
     """
-    db = load_db()
+    db = Database.load_db()
     user = db.get(str(user_id))
     if not user:
-        print(" User not found.")
+        print("User not found.")
         return None
 
     now = time.time()
@@ -108,29 +85,20 @@ def maybe_reward_user(user_id):
     # ===  Base reward probability (unchanged)
     base_probability = calculate_reward_probability(time_diff)
 
-    # ===  Rarity-based boosts
-    rarity_boosts = {
-        "rare": 0.028,       # +2.8% reward amount
-        "exotic": 0.05,     # +5% reward amount
-        "legendary": 0.12,   # +12% reward amount
-        "sacred": 0.24       # +24% reward amount
-    }
-
-    rarity_order = ["common", "rare", "exotic", "legendary", "sacred"]
     items = user.get("items", [])
 
     # Sort by rarity (highest first)
     items_sorted = sorted(
         items,
-        key=lambda x: rarity_order.index(x["rarity"]) if x["rarity"] in rarity_order else 0,
+        key=lambda x: config.rarity_order.index(x["rarity"]) if x["rarity"] in config.rarity_order else 0,
         reverse=True
     )
 
     # Consider up to 5 rarest items
     top_items = items_sorted[:5]
 
-    # ===  Calculate reward amount boost
-    total_reward_boost = sum(rarity_boosts.get(it["rarity"], 0.0) for it in top_items)
+    # === Calculate reward amount boost
+    total_reward_boost = sum(config.rarity_boosts.get(it["rarity"], 0.0) for it in top_items)
     total_reward_boost = min(total_reward_boost, 0.60)  # +60% cap
 
     # ===  Calculate Sacred-based chance boost
@@ -138,17 +106,15 @@ def maybe_reward_user(user_id):
     sacred_chance_boost = min(sacred_count * 0.15, 0.75)  # +15% per Sacred, up to +75%
     final_probability = base_probability * (1 + sacred_chance_boost)
 
-    # ===  Rolling window spam penalty (β = 0.75, 10-minute window)
+    # === Rolling window spam penalty (β = 0.75, 10-minute window)
     # Each additional post within the window reduces probability by 1/n^0.75,
     # making rapid-fire posting far less efficient than paced posting.
-    SPAM_WINDOW = 600   # 10 minutes in seconds
-    SPAM_BETA   = 0.75
-    recent_times = [t for t in user.get("recent_post_times", []) if now - t < SPAM_WINDOW]
+    recent_times = [t for t in user.get("recent_post_times", []) if now - t < config.SPAM_WINDOW]
     n = len(recent_times) + 1  # +1 counts the current post
-    spam_penalty = 1.0 / (n ** SPAM_BETA)
+    spam_penalty = 1.0 / (n ** config.SPAM_BETA)
     final_probability *= spam_penalty
 
-    # === Reward roll
+    # ===  Reward roll
     recent_times.append(now)   # always record the post, win or lose
     if random.random() < final_probability:
         base_reward = random.randint(5, 25)
@@ -156,9 +122,9 @@ def maybe_reward_user(user_id):
         user["balance"] += boosted_reward
         user["time_since_last_post"] = now
         user["recent_post_times"] = recent_times
-        save_db(db)
+        Database.save_db(db)
         print(
-            f" {user['username']} received {boosted_reward} OT Bucks "
+            f"{user['username']} received {boosted_reward} OT Bucks "
             f"(base={base_reward}, +{total_reward_boost*100:.1f}% reward boost, "
             f"chance +{sacred_chance_boost*100:.1f}% sacred, "
             f"spam ×{spam_penalty:.2f} [n={n} in window])"
@@ -167,9 +133,9 @@ def maybe_reward_user(user_id):
     else:
         user["time_since_last_post"] = now
         user["recent_post_times"] = recent_times
-        save_db(db)
+        Database.save_db(db)
         print(
-            f" {user['username']} got no reward "
+            f"{user['username']} got no reward "
             f"(p={final_probability:.4f}, sacred +{sacred_chance_boost*100:.1f}%, "
             f"spam ×{spam_penalty:.2f} [n={n} in window])"
         )
@@ -180,7 +146,7 @@ def maybe_reward_user(user_id):
 
 
 import time
-from commands import (
+from Commands.commands import (
     check_post_for_commands,
     process_command_queue,
     command_queue
@@ -188,17 +154,17 @@ from commands import (
 
 
 
-from API import check_new_posts   # your existing function
-from ForumUpdate import update_post      # your update function
-from investments import check_investments
+from API.API import OsuApi   # your existing function
+from ForumUpdate import ForumUpdate  # your update function
+from Investments.investments import Investment
 
-TICK_INTERVAL = 15  # seconds between checks
+
 
 def tick_loop():
     state = load_state()
     tick_count = state.get("tick_count", 0)
 
-    print("🌀 Starting OT Economy Bot...")
+    print("Starting OT Economy Bot...")
 
     while True:
         tick_count += 1
@@ -210,8 +176,8 @@ def tick_loop():
         try:
             state_changed = False  # <--- Track if anything changed this tick
 
-            #  Check for new posts
-            new_posts_per_topic = check_new_posts()
+            # Check for new posts
+            new_posts_per_topic = OsuApi.check_new_posts()
 
             # Process rewards + commands as usual
             for topic_posts in new_posts_per_topic:
@@ -228,27 +194,27 @@ def tick_loop():
                     state_changed = True
 
             # Resolve any active investments
-            if check_investments():
+            if Investment.check_investments():
                 state_changed = True
 
-            #  Apply wealth tax if this is a "weekly" tick
-            prev_db = load_db()
+            # Apply wealth tax if this is a "weekly" tick
+            prev_db = Database.load_db()
             apply_wealth_tax_tick_based(tick_count)
-            new_db = load_db()
+            new_db = Database.load_db()
             if new_db != prev_db:
                 state_changed = True
 
             # Only update the forum if something changed
             if state_changed:
-                print("🪶 Updating forum post (changes detected)...")
-                update_post()
+                print("Updating forum post (changes detected)...")
+                ForumUpdate.update_post()
             else:
-                print("💤 No changes — skipping forum update.")
+                print("No changes — skipping forum update.")
 
         except Exception as e:
-            print(f"❌ Error during tick: {e}")
+            print(f"Error during tick: {e}")
 
-        time.sleep(TICK_INTERVAL)
+        time.sleep(config.TICK_INTERVAL)
 
 
 tick_loop()

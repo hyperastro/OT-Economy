@@ -1,281 +1,387 @@
 from ossapi import Ossapi, Scope
-import json
 import string
 import time
-from pathlib import Path
+import json
+import config
+
 
 # === osu! API Setup ===
-from config import (
-    CLIENT_ID, CLIENT_SECRET, REDIRECT_URI
-)
 scopes = [Scope.PUBLIC, Scope.FORUM_WRITE]
-api    = Ossapi(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, scopes = scopes)
+api = Ossapi(config.client_id, config.client_secret, config.callback_url, scopes=scopes)
 
 # === Local DB ===
-DB_PATH = Path("database.json")
-COMMAND_HISTORY_PATH = Path("command_history.json")
-INVESTMENTS_PATH = Path("investments.json")
-SNAPSHOT_PATH = Path("balance_snapshot.json")
-POST_ID = 10010331   # post you want to update
+class ForumUpdate:
+    @staticmethod
+    # === Build Leaderboard ===
+    def update_leaderboard(db):
+        """Return a formatted leaderboard showing the top 10 richest users with colored ranks and economy statistics."""
+        # Sort users by OT bucks (balance)
+        sorted_users = sorted(
+            db.items(),
+            key=lambda x: x[1].get("balance", 0),
+            reverse=True
+        )[:10]  # only top 10
 
-# ===  Build Leaderboard ===
-def update_leaderboard(db):
-    """Return a formatted leaderboard showing the top 10 richest users with colored ranks and economy statistics."""
-    # Sort users by OT bucks (balance)
-    sorted_users = sorted(
-        db.items(),
-        key=lambda x: x[1].get("balance", 0),
-        reverse=True
-    )[:10]  # only top 10
+        # Colors for top ranks
+        rank_colors = {
+            1: "gold",     #
+            2: "silver",   #
+            3: "#cd7f32"   #(bronze)
+        }
 
-    # Colors for top ranks
-    rank_colors = {
-        1: "gold",     # 
-        2: "silver",   # 
-        3: "#cd7f32"   #  (bronze)
-    }
+        # --- Stat 1: Total + average OT bucks ---
+        total_ot_bucks = sum(user.get("balance", 0) for user in db.values())
+        user_count = len(db)
+        avg_bucks = round(total_ot_bucks / user_count) if user_count > 0 else 0
 
-    # --- Stat 1: Total + average OT bucks ---
-    total_ot_bucks = sum(user.get("balance", 0) for user in db.values())
-    user_count = len(db)
-    avg_bucks = round(total_ot_bucks / user_count) if user_count > 0 else 0
+        # --- Stat 2: Investment success rate (last 2 weeks) ---
+        two_weeks_ago = time.time() - (14 * 24 * 3600)
+        success_count = 0
+        resolved_count = 0
+        if config.INVESTMENTS_PATH.exists():
+            with open(config.INVESTMENTS_PATH, "r") as f:
+                try:
+                    investments = json.load(f)
+                except json.JSONDecodeError:
+                    investments = []
+            for inv in investments:
+                if inv.get("status") in ("success", "failed"):
+                    if inv.get("resolved_at", 0) >= two_weeks_ago:
+                        resolved_count += 1
+                        if inv["status"] == "success":
+                            success_count += 1
 
-    # --- Stat 2: Investment success rate (last 2 weeks) ---
-    two_weeks_ago = time.time() - (14 * 24 * 3600)
-    success_count = 0
-    resolved_count = 0
-    if INVESTMENTS_PATH.exists():
-        with open(INVESTMENTS_PATH, "r") as f:
-            try:
-                investments = json.load(f)
-            except json.JSONDecodeError:
-                investments = []
-        for inv in investments:
-            if inv.get("status") in ("success", "failed"):
-                if inv.get("resolved_at", 0) >= two_weeks_ago:
-                    resolved_count += 1
-                    if inv["status"] == "success":
-                        success_count += 1
-
-    if resolved_count > 0:
-        success_pct = round(success_count / resolved_count * 100)
-        success_str = f"{success_pct}% ({success_count}/{resolved_count} investments)"
-    else:
-        success_str = "No resolved investments in the last 2 weeks"
-
-    # --- Stat 3: Richest gains this week (vs weekly balance snapshot) ---
-    top_gainer_str = "No snapshot yet — gains will appear after the first weekly tick"
-    if SNAPSHOT_PATH.exists():
-        with open(SNAPSHOT_PATH, "r") as f:
-            try:
-                snapshot = json.load(f)
-            except json.JSONDecodeError:
-                snapshot = {}
-        snapshot_balances = snapshot.get("balances", {})
-        best_uid, best_gain = None, None
-        for uid, user in db.items():
-            prev = snapshot_balances.get(uid, 0)  # new users had 0 last week
-            gain = user.get("balance", 0) - prev
-            if best_gain is None or gain > best_gain:
-                best_gain = gain
-                best_uid = uid
-        if best_uid is not None:
-            name = db[best_uid]["username"]
-            sign = f"+{best_gain}" if best_gain >= 0 else str(best_gain)
-            top_gainer_str = f"{name} ({sign} OT Bucks)"
-
-    # --- Stat 4: Item rarity distribution ---
-    rarity_colors = {
-        "common": "grey", "rare": "lime", "exotic": "cyan",
-        "legendary": "red", "sacred": "gold",
-    }
-    rarity_counts = {r: 0 for r in rarity_colors}
-    total_items = 0
-    for user in db.values():
-        for item in user.get("items", []):
-            r = item.get("rarity", "common").lower()
-            if r in rarity_counts:
-                rarity_counts[r] += 1
-            else:
-                rarity_counts[r] = rarity_counts.get(r, 0) + 1
-            total_items += 1
-
-    if total_items > 0:
-        parts = []
-        for r, color in rarity_colors.items():
-            count = rarity_counts.get(r, 0)
-            if count:
-                pct = round(count / total_items * 100)
-                parts.append(f"[color={color}]{r}: {count} ({pct}%)[/color]")
-        rarity_str = " | ".join(parts) if parts else "None"
-    else:
-        rarity_str = "No items in circulation"
-
-    # --- Assemble output ---
-    lines = ["[centre][b]OT!Economy Richest Users:[/b][/centre]"]
-    for rank, (uid, user) in enumerate(sorted_users, start=1):
-        color = rank_colors.get(rank)
-        if color:
-            lines.append(f"[color={color}]{rank}. {user['username']} — {user['balance']} OT bucks[/color]")
+        if resolved_count > 0:
+            success_pct = round(success_count / resolved_count * 100)
+            success_str = f"{success_pct}% ({success_count}/{resolved_count} investments)"
         else:
-            lines.append(f"{rank}. {user['username']} — {user['balance']} OT bucks")
+            success_str = "No resolved investments in the last 2 weeks"
 
-    lines.append("")
-    lines.append(f"[i]Total OT Bucks in circulation: {total_ot_bucks}[/i]")
-    lines.append(f"[box=[b]More Stats:[/b]][i]Average OT Bucks per user: {avg_bucks}[/i]")
-    lines.append(f"[i]Investment success rate (last 2 weeks): {success_str}[/i]")
-    lines.append(f"[i]Richest gains this week: {top_gainer_str}[/i]")
-    lines.append(f"[i]Item rarity distribution: {rarity_str}[/i][/box]")
+        # --- Stat 3: Richest gains this week (vs weekly balance snapshot) ---
+        top_gainer_str = "No snapshot yet — gains will appear after the first weekly tick"
+        if config.SNAPSHOT_PATH.exists():
+            with open(config.SNAPSHOT_PATH, "r") as f:
+                try:
+                    snapshot = json.load(f)
+                except json.JSONDecodeError:
+                    snapshot = {}
+            snapshot_balances = snapshot.get("balances", {})
+            best_uid, best_gain = None, None
+            for uid, user in db.items():
+                prev = snapshot_balances.get(uid, 0)  # new users had 0 last week
+                gain = user.get("balance", 0) - prev
+                if best_gain is None or gain > best_gain:
+                    best_gain = gain
+                    best_uid = uid
+            if best_uid is not None:
+                name = db[best_uid]["username"]
+                sign = f"+{best_gain}" if best_gain >= 0 else str(best_gain)
+                top_gainer_str = f"{name} ({sign} OT Bucks)"
 
-    return "\n".join(lines)
-
-
-
-# ===  Build Ledger (A–Z boxes) ===
-def create_ledger(db):
-    """Return formatted ledger boxes for all users grouped by first letter, with colored item rarities."""
-
-    # Define rarity → color mapping
-    rarity_colors = {
-        "common": "grey",
-        "rare": "lime",
-        "exotic": "cyan",
-        "legendary": "red",
-        "sacred": "gold"
-    }
-
-    import string
-    alphabet = list(string.ascii_uppercase)
-    ledger_lines = []
-    grouped = {letter: [] for letter in alphabet}
-    grouped["#"] = []
-
-    # Group users by starting letter
-    for user in db.values():
-        name = user["username"]
-        first = name[0].upper() if name else "#"
-        if first not in grouped:
-            first = "#"
-        grouped[first].append(user)
-
-    for letter in grouped:
-        if not grouped[letter]:
-            continue
-
-        ledger_lines.append(f"[box={letter}]")
-        for user in sorted(grouped[letter], key=lambda u: u["username"].lower()):
-            item_boxes = []
+        # --- Stat 4: Item rarity distribution ---
+        rarity_colors = {
+            "common": "grey", "rare": "lime", "exotic": "cyan",
+            "legendary": "red", "sacred": "gold",
+        }
+        rarity_counts = {r: 0 for r in rarity_colors}
+        total_items = 0
+        for user in db.values():
             for item in user.get("items", []):
-                rarity  = item.get("rarity", "common").lower()
-                color   = rarity_colors.get(rarity, "grey")
-                history = format_item_history(item, user["username"])
-                box_title   = f"[color={color}]{item['name']}[/color] #{item['stack_id']} ×{item['quantity']}"
-                box_content = (
-                    f"{history}\n"
-                    f"item rarity: [color={color}]{rarity}[/color]"
-                )
-                item_boxes.append(f"[box={box_title}]{box_content}[/box]")
+                r = item.get("rarity", "common").lower()
+                if r in rarity_counts:
+                    rarity_counts[r] += 1
+                else:
+                    rarity_counts[r] = rarity_counts.get(r, 0) + 1
+                total_items += 1
 
-            items_str = ", ".join(item_boxes) if item_boxes else "None"
-
-            ledger_lines.append(f"[box={user['username']}]")
-            ledger_lines.append(f"OT bucks : {user.get('balance', 0)}")
-            ledger_lines.append(f"Items : {items_str}")
-            ledger_lines.append("[/box]")
-        ledger_lines.append("[/box]")
-
-    return "\n".join(ledger_lines)
-
-
-# === Item history formatter ===
-def format_item_history(item, current_username):
-    """
-    Render the ownership chain for a single item stack as a single line.
-    e.g.  PlayerA -> PlayerB (upgraded to rare) -> PlayerC
-    Legacy items with no history field fall back to: Unknown origin -> current_username
-    """
-    history = item.get("history")
-    if not history:
-        return f"Unknown origin -> {current_username}"
-
-    parts = []
-    for entry in history:
-        label   = entry.get("owner", "?")
-        upgrades = entry.get("upgrades", [])
-        if upgrades:
-            label += f" (upgraded to {upgrades[-1]})"
-        parts.append(label)
-
-    return " -> ".join(parts)
-
-
-# === 2. Build Recent Commands Log ===
-def create_command_history():
-    """Return a formatted list of the most recently executed commands (most recent first)."""
-    if not COMMAND_HISTORY_PATH.exists():
-        return "[i]No commands have been executed yet.[/i]"
-
-    with open(COMMAND_HISTORY_PATH, "r", encoding="utf-8") as f:
-        try:
-            history = json.load(f)
-        except json.JSONDecodeError:
-            history = []
-
-    if not history:
-        return "[i]No commands have been executed yet.[/i]"
-
-    lines = []
-    for entry in reversed(history):  # most recent first
-        timestamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(entry.get("timestamp", 0)))
-        username = entry.get("username", "unknown")
-        command = entry.get("command", "")
-        if entry.get("success"):
-            status = "[color=lime]✅[/color]"
+        if total_items > 0:
+            parts = []
+            for r, color in rarity_colors.items():
+                count = rarity_counts.get(r, 0)
+                if count:
+                    pct = round(count / total_items * 100)
+                    parts.append(f"[color={color}]{r}: {count} ({pct}%)[/color]")
+            rarity_str = " | ".join(parts) if parts else "None"
         else:
-            status = "[color=red]❌[/color]"
-        lines.append(f"{status} [{timestamp}] {username}: {command}")
+            rarity_str = "No items in circulation"
 
-    return "\n".join(lines)
+        # --- Assemble output ---
+        lines = ["[centre][b]OT!Economy Richest Users:[/b][/centre]"]
+        for rank, (uid, user) in enumerate(sorted_users, start=1):
+            color = rank_colors.get(rank)
+            if color:
+                lines.append(f"[color={color}]{rank}. {user['username']} — {user['balance']} OT bucks[/color]")
+            else:
+                lines.append(f"{rank}. {user['username']} — {user['balance']} OT bucks")
 
+        lines.append("")
+        lines.append(f"[i]Total OT Bucks in circulation: {total_ot_bucks}[/i]")
+        lines.append(f"[i]Average OT Bucks per user: {avg_bucks}[/i]")
+        lines.append(f"[i]Investment success rate (last 2 weeks): {success_str}[/i]")
+        lines.append(f"[i]Richest gains this week: {top_gainer_str}[/i]")
+        lines.append(f"[i]Item rarity distribution: {rarity_str}[/i]")
 
-# ===  Combine Everything ===
-from pathlib import Path
-import json
-
-INTRO_PATH = Path("post_intro.txt")
-
-def create_updated_post():
-    """Combine static intro text from file, ledger, and leaderboard into final forum post."""
-    if not DB_PATH.exists():
-        return "No data available."
-
-    with open(DB_PATH, "r", encoding="utf-8") as f:
-        db = json.load(f)
-
-    # Load your formatted intro text
-    if INTRO_PATH.exists():
-        with open(INTRO_PATH, "r", encoding="utf-8") as f:
-            static_text = f.read().strip()
-    else:
-        static_text = "[b]OT!Economy[/b] missing intro text file!"
-
-    # Build ledger + leaderboard + command history
-    ledger = create_ledger(db)
-    leaderboard = update_leaderboard(db)
-    command_history = create_command_history()
-
-    # Combine final post
-    return (
-        f"{static_text}\n"
-        f"[notice]{leaderboard}\n[/notice]"
-        f"[notice][centre][b]OT! Economy Ledger[/b][/centre]\n{ledger}\n[/notice]"
-        f"[notice][centre][b]Recent Commands[/b][/centre]\n{command_history}\n[/notice]"
-    )
+        return "\n".join(lines)
 
 
 
-# ===  Upload the post ===
-def update_post():
-    text = create_updated_post()
-    api.forum_edit_post(post_id=POST_ID, body=text)
-    print("✅ Forum post updated successfully.")
+    # === Build Ledger (A–Z boxes) ===
+    @staticmethod
+    def create_ledger(db):
+        """Return formatted ledger boxes for all users grouped by first letter, with colored item rarities."""
+
+        # Define rarity → color mapping
+        rarity_colors = {
+            "common": "grey",
+            "rare": "lime",
+            "exotic": "cyan",
+            "legendary": "red",
+            "sacred": "gold",
+            "redacted": "purple",
+        }
+
+        import string
+        alphabet = list(string.ascii_uppercase)
+        ledger_lines = []
+        grouped = {letter: [] for letter in alphabet}
+        grouped["#"] = []
+
+        # Build a set of entity names (lowercased) so format_item_history
+        # can tag entity owners without hitting disk on every item.
+        entity_names: set = set()
+        if config.ENTITIES_PATH.exists():
+            with open(config.ENTITIES_PATH, "r", encoding="utf-8") as f:
+                try:
+                    ents = json.load(f)
+                    entity_names = {e["name"].lower() for e in ents.values()}
+                except json.JSONDecodeError:
+                    pass
+
+        # Group users by starting letter
+        for user in db.values():
+            name = user["username"]
+            first = name[0].upper() if name else "#"
+            if first not in grouped:
+                first = "#"
+            grouped[first].append(user)
+
+        for letter in grouped:
+            if not grouped[letter]:
+                continue
+
+            ledger_lines.append(f"[box={letter}]")
+            for user in sorted(grouped[letter], key=lambda u: u["username"].lower()):
+                item_boxes = []
+                for item in user.get("items", []):
+                    rarity  = item.get("rarity", "common").lower()
+                    color   = rarity_colors.get(rarity, "grey")
+                    history = ForumUpdate.format_item_history(item, user["username"], entity_names)
+                    box_title   = f"[color={color}]{item['name']}[/color] #{item['stack_id']} ×{item['quantity']}"
+                    box_content = (
+                        f"{history}\n"
+                        f"item rarity: [color={color}]{rarity}[/color]"
+                    )
+                    item_boxes.append(f"[box={box_title}]{box_content}[/box]")
+
+                items_str = ", ".join(item_boxes) if item_boxes else "None"
+
+                ledger_lines.append(f"[box={user['username']}]")
+                ledger_lines.append(f"OT bucks : {user.get('balance', 0)}")
+                ledger_lines.append(f"Items : {items_str}")
+                ledger_lines.append("[/box]")
+            ledger_lines.append("[/box]")
+
+        return "\n".join(ledger_lines)
+
+
+    # === Item history formatter ===
+    @staticmethod
+    def format_item_history(item, current_username, entity_names: set = None):
+        """
+        Render the ownership chain for a single item stack as a single line.
+        e.g.  Google LTD (entity) -> PlayerA (upgraded to rare) -> PlayerB
+        Legacy items with no history field fall back to: Unknown origin -> current_username
+
+        entity_names: optional set of lowercased entity names. When an owner
+        matches, "(entity)" is appended so readers can't confuse entities with
+        real player names.
+        """
+        history = item.get("history")
+        if not history:
+            return f"Unknown origin -> {current_username}"
+
+        parts = []
+        for entry in history:
+            label    = entry.get("owner", "?")
+            upgrades = entry.get("upgrades", [])
+
+            # Tag entity owners so they're distinguishable from player names
+            if entity_names and label.lower() in entity_names:
+                label += " (entity)"
+
+            if upgrades:
+                label += f" (upgraded to {upgrades[-1]})"
+            parts.append(label)
+
+        return " -> ".join(parts)
+
+
+    # === Build Recent Commands Log ===
+    @staticmethod
+    def create_command_history():
+        """Return a formatted list of the most recently executed commands (most recent first)."""
+        if not config.COMMAND_HISTORY_PATH.exists():
+            return "[i]No commands have been executed yet.[/i]"
+
+        with open(config.COMMAND_HISTORY_PATH, "r", encoding="utf-8") as f:
+            try:
+                history = json.load(f)
+            except json.JSONDecodeError:
+                history = []
+
+        if not history:
+            return "[i]No commands have been executed yet.[/i]"
+
+        lines = []
+        for entry in reversed(history):  # most recent first
+            timestamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(entry.get("timestamp", 0)))
+            username = entry.get("username", "unknown")
+            command = entry.get("command", "")
+            if entry.get("success"):
+                status = "[color=lime]✅[/color]"
+            else:
+                status = "[color=red]❌[/color]"
+            lines.append(f"{status} [{timestamp}] {username}: {command}")
+
+        return "\n".join(lines)
+
+
+    # === Build Entity Ledger ===
+    @staticmethod
+    def create_entity_ledger():
+        """Return formatted entity ledger boxes grouped A–Z, mirroring the user ledger style."""
+        if not config.ENTITIES_PATH.exists():
+            return "[i]No entities registered yet.[/i]"
+
+        with open(config.ENTITIES_PATH, "r", encoding="utf-8") as f:
+            try:
+                entities = json.load(f)
+            except json.JSONDecodeError:
+                return "[i]No entities registered yet.[/i]"
+
+        if not entities:
+            return "[i]No entities registered yet.[/i]"
+
+        # Load user DB so we can resolve IDs to usernames
+        db = {}
+        if config.DB_PATH.exists():
+            with open(config.DB_PATH, "r", encoding="utf-8") as f:
+                db = json.load(f)
+
+        rarity_colors = {
+            "common": "grey", "rare": "lime", "exotic": "cyan",
+            "legendary": "red", "sacred": "gold", "redacted": "purple",
+        }
+
+        # Build entity name set for history tagging (same logic as create_ledger)
+        entity_names: set = {e["name"].lower() for e in entities.values()}
+
+        alphabet = list(string.ascii_uppercase)
+        grouped = {letter: [] for letter in alphabet}
+        grouped["#"] = []
+
+        for entity in entities.values():
+            first = entity["name"][0].upper() if entity["name"] else "#"
+            if first not in grouped:
+                first = "#"
+            grouped[first].append(entity)
+
+        ledger_lines = []
+        for letter in alphabet + ["#"]:
+            if not grouped.get(letter):
+                continue
+
+            ledger_lines.append(f"[box={letter}]")
+            for entity in sorted(grouped[letter], key=lambda e: e["name"].lower()):
+
+                # Resolve member names
+                creator_id   = str(entity.get("creator_id", ""))
+                creator_name = db.get(creator_id, {}).get("username", f"ID:{creator_id}")
+                employee_names = [
+                    db.get(str(eid), {}).get("username", f"ID:{eid}")
+                    for eid in entity.get("employee_ids", [])
+                ]
+                members_str = creator_name + " (owner)"
+                if employee_names:
+                    members_str += ", " + ", ".join(employee_names)
+
+                # Format inventory items (same style as user ledger)
+                item_boxes = []
+                for item in entity.get("items", []):
+                    rarity  = item.get("rarity", "common").lower()
+                    color   = rarity_colors.get(rarity, "grey")
+                    history = ForumUpdate.format_item_history(item, entity["name"], entity_names)
+                    box_title   = f"[color={color}]{item['name']}[/color] #{item['stack_id']} ×{item['quantity']}"
+                    box_content = f"{history}\nitem rarity: [color={color}]{rarity}[/color]"
+                    item_boxes.append(f"[box={box_title}]{box_content}[/box]")
+                items_str = ", ".join(item_boxes) if item_boxes else "None"
+
+                # Format shop listings
+                listing_lines = []
+                for lst in entity.get("listings", []):
+                    listing_lines.append(
+                        f"{lst['quantity']}x {lst['item_name']} (#{lst['stack_id']}) "
+                        f"— {lst['price_per_unit']} OT Bucks each"
+                    )
+                listings_str = "\n".join(listing_lines) if listing_lines else "No active listings"
+
+                ledger_lines.append(f"[box={entity['name']}]")
+                ledger_lines.append(f"Balance : {entity.get('balance', 0)} OT Bucks")
+                ledger_lines.append(f"Members : {members_str}")
+                ledger_lines.append(f"Items : {items_str}")
+                ledger_lines.append(f"[box=Shop listings]{listings_str}[/box]")
+                ledger_lines.append("[/box]")
+
+            ledger_lines.append("[/box]")
+
+        return "\n".join(ledger_lines)
+
+
+
+    @staticmethod
+    def create_updated_post():
+        """Combine static intro text from file, ledger, and leaderboard into final forum post."""
+        if not config.DB_PATH.exists():
+            return "No data available."
+
+        with open(config.DB_PATH, "r", encoding="utf-8") as f:
+            db = json.load(f)
+
+        # Load your formatted intro text
+        if config.INTRO_PATH.exists():
+            with open(config.INTRO_PATH, "r", encoding="utf-8") as f:
+                static_text = f.read().strip()
+        else:
+            static_text = "[b]OT!Economy[/b] missing intro text file!"
+
+        # Build ledger + leaderboard + entity ledger + command history
+        ledger = ForumUpdate.create_ledger(db)
+        leaderboard = ForumUpdate.update_leaderboard(db)
+        entity_ledger = ForumUpdate.create_entity_ledger()
+        command_history = ForumUpdate.create_command_history()
+
+        # Combine final post
+        return (
+            f"{static_text}\n"
+            f"[notice]{leaderboard}\n[/notice]"
+            f"[notice][centre][b]OT! Economy Ledger[/b][/centre]\n{ledger}\n[/notice]"
+            f"[notice][centre][b]OT! Entities[/b][/centre]\n{entity_ledger}\n[/notice]"
+            f"[notice][centre][b]Recent Commands[/b][/centre]\n{command_history}\n[/notice]"
+        )
+
+    # === Upload the post ===
+    @staticmethod
+    def update_post():
+        text = ForumUpdate.create_updated_post()
+        api.forum_edit_post(post_id=config.POST_ID, body=text)
+        print("✅ Forum post updated successfully.")

@@ -5,13 +5,11 @@ import threading
 import requests
 import json
 import time
-
-from config import (
-    CLIENT_ID, CLIENT_SECRET, REDIRECT_URI
-)
-
+import config
 # === CONFIG ===
-
+CLIENT_ID = config.client_id
+CLIENT_SECRET = config.client_secret
+REDIRECT_URI = config.callback_url
 AUTH_URL = (
     f"https://osu.ppy.sh/oauth/authorize?"
     f"client_id={CLIENT_ID}"
@@ -64,7 +62,7 @@ server_thread.start()
 while auth_code is None:
     time.sleep(1)
 
-print(f"Got authorization code: {auth_code[:10]}...")
+print(f"✅ Got authorization code: {auth_code[:10]}...")
 
 # === STEP 3: EXCHANGE CODE FOR TOKENS ===
 data = {
@@ -90,5 +88,5 @@ with open(TOKEN_FILE, "w", encoding="utf-8") as f:
 
 print("Token saved to osu_token_cache.json!")
 print(json.dumps(token_data, indent=2))
-print("\IT FUCKING WORKED")
+print("Done! You can now run your bot normally!  it will auto-refresh tokens forever.")
 
