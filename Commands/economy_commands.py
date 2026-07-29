@@ -28,7 +28,7 @@ def cmd_give(args, user_id, username, topic_id=None):
     Returns True if transfer succeeded, False otherwise.
     """
     if len(args) < 2:
-        print("⚠Usage: !give [amount] {target}")
+        print("Usage: !give [amount] {target}")
         return False
 
     amount_str, target_name = args
@@ -276,7 +276,11 @@ def cmd_item_delete(args, user_id, username, topic_id=None):
 
 def cmd_item_upgrade(args, user_id, username, topic_id=None):
     item_name, stack_id, *qty_arg = args
-    qty = int(qty_arg[0]) if qty_arg else None
+    qty = int(qty_arg[0]) if qty_arg else 1  # default: upgrade just 1 item, not the whole stack
+    if qty <= 0:
+        print("Quantity must be at least 1.")
+        return False
+
     db = Database.load_db()
     user = db.get(str(user_id))
     if not user:
@@ -285,39 +289,62 @@ def cmd_item_upgrade(args, user_id, username, topic_id=None):
 
     for item in user["items"]:
         if item["name"].lower() == item_name.lower() and item["stack_id"] == stack_id:
+            if qty > item["quantity"]:
+                print(f"You only have {item['quantity']}x {item['name']} in that stack.")
+                return False
+
             rarity_next = next_rarity(item["rarity"])
             if not rarity_next:
                 print("⚠️ Already at highest rarity.")
                 return False
             new_rarity, cost_per_item = rarity_next
-            qty = qty or item["quantity"]
-            cost = int(cost_per_item) * int(qty)
+            cost = int(cost_per_item) * qty
             if user["balance"] < cost:
                 print("Not enough OT bucks.")
                 return False
             user["balance"] -= cost
-            item["rarity"] = new_rarity
 
-            # Record upgrade in ownership history.
-            # Prepend "Unknown origin" for legacy items so provenance is preserved.
-            if not item.get("history"):
-                item["history"] = [
-                    {"owner": "Unknown origin", "upgrades": []},
-                    {"owner": username, "upgrades": [new_rarity]},
-                ]
+            if qty == item["quantity"]:
+                # Upgrading the whole stack — update it in place, same as before.
+                item["rarity"] = new_rarity
+                if not item.get("history"):
+                    item["history"] = [
+                        {"owner": "Unknown origin", "upgrades": []},
+                        {"owner": username, "upgrades": [new_rarity]},
+                    ]
+                else:
+                    last = item["history"][-1]
+                    if last["owner"].lower() == username.lower():
+                        last.setdefault("upgrades", []).append(new_rarity)
+                    else:
+                        item["history"].append({"owner": username, "upgrades": [new_rarity]})
             else:
-                last = item["history"][-1]
+                # Partial upgrade — split the stack: shrink the original,
+                # and create a new stack at the new rarity for the upgraded units.
+                item["quantity"] -= qty
+
+                base_history = item.get("history") or [{"owner": "Unknown origin", "upgrades": []}]
+                upgraded_history = copy.deepcopy(base_history)
+                last = upgraded_history[-1]
                 if last["owner"].lower() == username.lower():
                     last.setdefault("upgrades", []).append(new_rarity)
                 else:
-                    item["history"].append({"owner": username, "upgrades": [new_rarity]})
+                    upgraded_history.append({"owner": username, "upgrades": [new_rarity]})
+
+                new_stack_id = next_stack_id(user["items"], item["name"])
+                user["items"].append({
+                    "name":     item["name"],
+                    "quantity": qty,
+                    "rarity":   new_rarity,
+                    "stack_id": new_stack_id,
+                    "history":  upgraded_history,
+                })
 
             Database.save_db(db)
-            print(f"✅ Upgraded {item_name} (stack {stack_id}) to {new_rarity} rarity.")
+            print(f"✅ Upgraded {qty}x {item_name} (stack {stack_id}) to {new_rarity} rarity.")
             return True
     print("Item not found.")
     return False
-
 
 def cmd_invest(args, user_id, username, topic_id=None):
     """
