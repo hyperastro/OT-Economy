@@ -131,24 +131,23 @@ def next_rarity(current):
 
 
 # === QUOTE STRIPPING ===
-def strip_quotes_stack(text):
-    result = []
-    stack = []
-    i = 0
-    while i < len(text):
-        if text[i:i+7].lower() == "[quote=" or text[i:i+7].lower() == "[quote]":
-            stack.append(i)
-            i = text.find("]", i) + 1
-        elif text[i:i+8].lower() == "[/quote]":
-            if stack:
-                stack.pop()
-            i += 8
-        else:
-            if not stack:
-                result.append(text[i])
-            i += 1
-    return ''.join(result).strip()
-
+def strip_code_and_quotes(text: str) -> str:
+    '''Removes the `[c]`, `[code]` and `[quote]` blocks and their content from string.'''
+    # Regex expressions
+    REGEX_PATTERNS: list[str] = [
+        r"\[c\](?!.*\[c*\]).*?\[/c\]|\[code\](?!.*\[code*\]).*?\[/code\]",  # clear [c] and [code] blocks
+        r"(?<=\[quote)=\"[^\"]*\"(?=\])",  # remove arg in [quote] blocks
+        r"\[quote\](?!.*\[quote\]).*?\[/quote\]"  # remove [quote] blocks
+    ]
+    
+    # Removal loop, in order of the list
+    for pattern_str in REGEX_PATTERNS:
+        pattern: re.Pattern[str] = re.compile(pattern_str)
+        m: re.Match[str] | None = pattern.search(text)
+        while m is not None:
+            text = text[:m.start()] + text[m.end():]
+            m = pattern.search(text)
+    return text
 
 # === COMMAND DETECTION ===
 def check_post_for_commands(postList):
@@ -157,7 +156,7 @@ def check_post_for_commands(postList):
 
     for post in postList:
         raw_text = post.get("raw", "")
-        dequoted_text = strip_quotes_stack(raw_text)
+        dequoted_text = strip_code_and_quotes(raw_text)
 
         for pattern, handler in COMMANDS:
             for line in dequoted_text.split("\n"):
