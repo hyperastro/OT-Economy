@@ -156,7 +156,7 @@ def check_post_for_commands(postList):
 
     for post in postList:
         raw_text = post.get("raw", "")
-        dequoted_text = strip_code_and_quotes(raw_text)
+        dequoted_text = strip_code_and_quotes(raw_text.replace('\n', '').replace('\r', '').strip())
 
         for pattern, handler in COMMANDS:
             for line in dequoted_text.split("\n"):
