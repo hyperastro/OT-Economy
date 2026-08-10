@@ -125,20 +125,179 @@ class ForumUpdate:
 
 
 
+    # === Compact item list (character-budget friendly) ===
+    @staticmethod
+    def format_items_compact(items):
+        """
+        Build a compact, comma-separated description of an inventory.
+
+        Items are grouped by (name, rarity) — two stacks only merge if both
+        the name AND the rarity match. Within a group, stacks whose numeric
+        IDs are consecutive AND share the same per-stack quantity are folded
+        into a single "#AAAA-#BBBB×Q" range. Any stack that breaks that
+        pattern (different quantity, or a gap in the numbering) is kept as
+        its own "#AAAA×Q" entry. Stacks with a non-numeric stack_id can't be
+        range-merged and are always listed individually.
+
+        This intentionally drops the old per-item [box]...[/box] wrapper and
+        inline ownership history — those are what were blowing up the post's
+        character count when an item existed as dozens/hundreds of stacks.
+        Single-stack items keep the old flat "name #id ×qty" look.
+
+        Returns a list of formatted strings (one per group), in first-seen
+        order. Join with ", " for the classic inline look.
+        """
+        rarity_colors = {
+            "common": "grey", "rare": "lime", "exotic": "cyan",
+            "legendary": "red", "sacred": "gold", "redacted": "purple",
+        }
+
+        groups = {}  # (name_lower, rarity) -> {"name": str, "rarity": str, "stacks": [(int_id|None, id_str, qty)]}
+        for item in items:
+            name = item.get("name", "")
+            rarity = item.get("rarity", "common").lower()
+            key = (name.lower(), rarity)
+            if key not in groups:
+                groups[key] = {"name": name, "rarity": rarity, "stacks": []}
+
+            sid_str = item.get("stack_id", "")
+            try:
+                sid_int = int(sid_str)
+            except (TypeError, ValueError):
+                sid_int = None
+
+            groups[key]["stacks"].append((sid_int, sid_str, item.get("quantity", 0)))
+
+        entries = []
+        for data in groups.values():
+            color = rarity_colors.get(data["rarity"], "grey")
+            name = data["name"]
+            stacks = data["stacks"]
+            total_qty = sum(s[2] for s in stacks)
+
+            if len(stacks) == 1:
+                _, sid_str, qty = stacks[0]
+                entries.append(f"[color={color}]{name}[/color] #{sid_str} ×{qty}")
+                continue
+
+            sortable = sorted((s for s in stacks if s[0] is not None), key=lambda s: s[0])
+            unsortable = [s for s in stacks if s[0] is None]
+
+            run_parts = []
+            i = 0
+            while i < len(sortable):
+                start_int, start_str, qty = sortable[i]
+                j = i
+                while (
+                    j + 1 < len(sortable)
+                    and sortable[j + 1][0] == sortable[j][0] + 1
+                    and sortable[j + 1][2] == qty
+                ):
+                    j += 1
+                end_int, end_str, _ = sortable[j]
+                if j == i:
+                    run_parts.append(f"#{start_str}×{qty}")
+                else:
+                    run_parts.append(f"#{start_str}-#{end_str}×{qty}")
+                i = j + 1
+
+            for _, sid_str, qty in unsortable:
+                run_parts.append(f"#{sid_str}×{qty}")
+
+            stacks_str = ", ".join(run_parts)
+            entries.append(f"[color={color}]{name}[/color] [stacks {stacks_str}] ×{total_qty}")
+
+        return entries
+
+
+    # === Item boxes with history + rarity (character-budget aware) ===
+    @staticmethod
+    def format_items_boxes(items, current_owner_name, entity_names: set = None):
+        """
+        Build one [box=...] per item stack — title, ownership history, and
+        rarity — matching the original ledger look.
+
+        To avoid the exact bloat that hit the 60k character limit, stacks
+        only collapse into a single box (with an ID range like #0001-#0061)
+        when they share the same name, rarity, per-stack quantity, AND an
+        *identical* ownership history. That's the common case: a batch of
+        stacks created together and never individually transferred/upgraded.
+        The moment a stack's history diverges (transferred, upgraded, split)
+        it gets its own box, so provenance is never hidden or blended.
+
+        Returns a list of "[box=...]...[/box]" strings, in first-seen order.
+        Join with ", " for the classic inline look.
+        """
+        rarity_colors = {
+            "common": "grey", "rare": "lime", "exotic": "cyan",
+            "legendary": "red", "sacred": "gold", "redacted": "purple",
+        }
+
+        groups = {}  # (name_lower, rarity) -> {"name": str, "rarity": str, "stacks": [item, ...]}
+        for item in items:
+            name = item.get("name", "")
+            rarity = item.get("rarity", "common").lower()
+            key = (name.lower(), rarity)
+            if key not in groups:
+                groups[key] = {"name": name, "rarity": rarity, "stacks": []}
+            groups[key]["stacks"].append(item)
+
+        def sid_int(it):
+            try:
+                return int(it.get("stack_id"))
+            except (TypeError, ValueError):
+                return None
+
+        boxes = []
+        for data in groups.values():
+            color = rarity_colors.get(data["rarity"], "grey")
+            name = data["name"]
+            rarity = data["rarity"]
+            stacks = data["stacks"]
+
+            sortable = sorted((it for it in stacks if sid_int(it) is not None), key=sid_int)
+            unsortable = [it for it in stacks if sid_int(it) is None]
+
+            # Build runs of consecutive stack IDs sharing quantity + history
+            runs = []
+            i = 0
+            while i < len(sortable):
+                run = [sortable[i]]
+                j = i
+                while (
+                    j + 1 < len(sortable)
+                    and sid_int(sortable[j + 1]) == sid_int(sortable[j]) + 1
+                    and sortable[j + 1]["quantity"] == sortable[j]["quantity"]
+                    and sortable[j + 1].get("history") == sortable[j].get("history")
+                ):
+                    j += 1
+                    run.append(sortable[j])
+                runs.append(run)
+                i = j + 1
+
+            for it in unsortable:
+                runs.append([it])
+
+            for run in runs:
+                total_qty = sum(it["quantity"] for it in run)
+                history_str = ForumUpdate.format_item_history(run[0], current_owner_name, entity_names)
+
+                if len(run) == 1:
+                    sid_label = f"#{run[0]['stack_id']}"
+                else:
+                    sid_label = f"#{run[0]['stack_id']}-#{run[-1]['stack_id']}"
+
+                box_title = f"[color={color}]{name}[/color] {sid_label} ×{total_qty}"
+                box_content = f"{history_str}\nitem rarity: [color={color}]{rarity}[/color]"
+                boxes.append(f"[box={box_title}]{box_content}[/box]")
+
+        return boxes
+
+
     # === Build Ledger (A–Z boxes) ===
     @staticmethod
     def create_ledger(db):
         """Return formatted ledger boxes for all users grouped by first letter, with colored item rarities."""
-
-        # Define rarity → color mapping
-        rarity_colors = {
-            "common": "grey",
-            "rare": "lime",
-            "exotic": "cyan",
-            "legendary": "red",
-            "sacred": "gold",
-            "redacted": "purple",
-        }
 
         import string
         alphabet = list(string.ascii_uppercase)
@@ -171,18 +330,7 @@ class ForumUpdate:
 
             ledger_lines.append(f"[box={letter}]")
             for user in sorted(grouped[letter], key=lambda u: u["username"].lower()):
-                item_boxes = []
-                for item in user.get("items", []):
-                    rarity  = item.get("rarity", "common").lower()
-                    color   = rarity_colors.get(rarity, "grey")
-                    history = ForumUpdate.format_item_history(item, user["username"], entity_names)
-                    box_title   = f"[color={color}]{item['name']}[/color] #{item['stack_id']} ×{item['quantity']}"
-                    box_content = (
-                        f"{history}\n"
-                        f"item rarity: [color={color}]{rarity}[/color]"
-                    )
-                    item_boxes.append(f"[box={box_title}]{box_content}[/box]")
-
+                item_boxes = ForumUpdate.format_items_boxes(user.get("items", []), user["username"], entity_names)
                 items_str = ", ".join(item_boxes) if item_boxes else "None"
 
                 ledger_lines.append(f"[box={user['username']}]")
@@ -278,17 +426,12 @@ class ForumUpdate:
             with open(config.DB_PATH, "r", encoding="utf-8") as f:
                 db = json.load(f)
 
-        rarity_colors = {
-            "common": "grey", "rare": "lime", "exotic": "cyan",
-            "legendary": "red", "sacred": "gold", "redacted": "purple",
-        }
-
-        # Build entity name set for history tagging (same logic as create_ledger)
-        entity_names: set = {e["name"].lower() for e in entities.values()}
-
         alphabet = list(string.ascii_uppercase)
         grouped = {letter: [] for letter in alphabet}
         grouped["#"] = []
+
+        # Build entity name set for history tagging (same logic as create_ledger)
+        entity_names: set = {e["name"].lower() for e in entities.values()}
 
         for entity in entities.values():
             first = entity["name"][0].upper() if entity["name"] else "#"
@@ -315,15 +458,8 @@ class ForumUpdate:
                 if employee_names:
                     members_str += ", " + ", ".join(employee_names)
 
-                # Format inventory items (same style as user ledger)
-                item_boxes = []
-                for item in entity.get("items", []):
-                    rarity  = item.get("rarity", "common").lower()
-                    color   = rarity_colors.get(rarity, "grey")
-                    history = ForumUpdate.format_item_history(item, entity["name"], entity_names)
-                    box_title   = f"[color={color}]{item['name']}[/color] #{item['stack_id']} ×{item['quantity']}"
-                    box_content = f"{history}\nitem rarity: [color={color}]{rarity}[/color]"
-                    item_boxes.append(f"[box={box_title}]{box_content}[/box]")
+                # Format inventory items (same box+history style as user ledger)
+                item_boxes = ForumUpdate.format_items_boxes(entity.get("items", []), entity["name"], entity_names)
                 items_str = ", ".join(item_boxes) if item_boxes else "None"
 
                 # Format shop listings

@@ -1,0 +1,66 @@
+[notice]
+[centre][size=150][b] OT!Economy [/b][/size][/centre]
+
+[centre][url=https://ibb.co/0TZZZNw][img]https://i.ibb.co/zpbbbck/Untitled-26.png[/img][/url][/centre]
+[heading]What is OT!Economy?[/heading]
+
+[b]OT!Economy[/b] is OT's own community-driven virtual economy!
+It lets users OT'ers, trade, and create custom items using a shared currency: [b]OT!Bucks[/b].
+
+Whether you're hoarding OT!Bucks, crafting legendary items, or just flexing your wealth, the economy grows and evolves through [b]your[/b] actions.
+Every user shapes the market... every post has value!
+
+[heading]How It Works[/heading]
+Every OT user can join by registering below.
+Once registered, you’ll start with [b]100 OT!Bucks[/b]. From there, you can earn more by posting, trading, and participating in community events.
+
+[b]Posting Rewards[/b]: Occasionally, posting in Off-Topic may grant you a small OT!Buck reward (5–25).
+The longer it’s been since your last post, the greater your chances of being rewarded.
+
+[b]Wealth Tax:[/b] To prevent monopolies and keep the economy somewhat fair, users holding over [b]10,000 OT!Bucks[/b] are subject to a [b]3% weekly wealth tax[/b].
+
+
+[heading]Commands[/heading]
+[b]!register[/b] - Registers you into OT!Economy (only run once).
+[b]!give {amount} {user}[/b] - Send a specific amount of OT!Bucks to another user.
+[b]!item create "{item name}" {quantity}[/b] - Create new items (costs 1 OT!Buck per item).
+[b]!item give "{item_name}" {target} [stack_id] {quantity}[/b] - Transfer an item to another user.
+[b]!item delete "{item_name}" {stack_id} [quantity][/b] - Deletes an item or stack from your inventory.
+[b]!item upgrade rarity "{item_name}" {stack_id} [quantity][/b] - Upgrade an item’s rarity (cost depends on rarity level).
+[b]!invest [investment_ammount] [unique_number_of_posts] [time][/b] - Create a investment in the desried thread
+
+For more details on commands please check the [url=https://osu.ppy.sh/community/forums/topics/2215782?n=1]OT!Economy offical guide[/url]
+
+
+[heading]Item Rarities[/heading]
+Items in OT!Economy have unique rarities that define their color and value:
+
+[b][color=grey]Common[/color][/b] - Base rarity when created.
+[b][color=lime]Rare[/color][/b] - 100 OT!Bucks to upgrade.
+[b][color=cyan]Exotic[/color][/b] - 350 OT!Bucks to upgrade.
+[b][color=red]Legendary[/color][/b] - 1500 OT!Bucks to upgrade.
+[b][color=gold]Sacred[/color][/b] - 10,000 OT!Bucks to upgrade; unique items only one player may hold.
+[i](Upgrade prices subject to change)[/i]
+
+[heading][b]Reward boost table:[/b][/heading]
+[b][color=lime]Rare[/color][/b] - +2.8% reward boost
+[b][color=cyan]Exotic[/color][/b] - +5% reward boost
+[b][color=red]Legendary[/color][/b] - +12% reward boost
+[b][color=gold]Sacred[/color][/b] - +24% reward boost & decrease reward cooldown by 30%
+[size=85](these values are subject to change)[/size]
+
+[size=130][color=gold][b]The top 5 highest rarity items in your inventory will each contribute to the reward boost.[/b][/color][/size]
+
+
+example:
+If I have 5 rare items my rewards will be boosted by 14%
+
+[heading]Trading and Strategy[/heading]
+Trade items, build collections, and rise to the top of the leaderboard.
+The economy rewards you for being creative, taking risk, and cooperating with others.
+
+Prove your financial prowess, fund others, or dominate through rare item hoarding.
+[b][i]Your reputation is worth as much as your OT!Bucks balance![/i]
+[/b]
+[size=85]OT!Economy is open source check the code by clicking [url=https://github.com/hyperastro/OT-Economy]here[/url][/size]
+[/notice]
