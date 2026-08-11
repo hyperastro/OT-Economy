@@ -36,7 +36,7 @@ def strip_code_and_quotes(text: str) -> str:
 
     # Removal loop, in order of the list
     for pattern_str in REGEX_PATTERNS:
-        pattern: re.Pattern[str] = re.compile(pattern_str)
+        pattern: re.Pattern[str] = re.compile(pattern_str, re.DOTALL)
         m: re.Match[str] | None = pattern.search(text)
         while m is not None:
             text = text[:m.start()] + text[m.end():]
@@ -82,7 +82,7 @@ def check_post_for_commands(postList):
 
     for post in postList:
         raw_text = post.get("raw", "")
-        dequoted_text = strip_code_and_quotes(raw_text.replace('\n', '').replace('\r', '').strip())
+        dequoted_text = strip_code_and_quotes(raw_text.replace('\r\n', '\n').replace('\r', '\n')).strip()
 
         for pattern, handler in COMMANDS:
             for line in dequoted_text.split("\n"):
