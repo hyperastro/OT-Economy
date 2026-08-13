@@ -3,7 +3,14 @@ import config
 from DatabaseLogic.db import Database
 from Entities.entities import Entity
 from Investments.investments import Investment
-from Commands.utils import validate_item_name, register_user, find_user_by_name, next_stack_id, next_rarity
+from Commands.utils import (
+    validate_item_name,
+    register_user,
+    find_user_by_name,
+    next_stack_id,
+    next_rarity,
+    merge_or_append_item_stack,
+)
 
 """
 Core economy commands:
@@ -133,8 +140,9 @@ def cmd_item_give(args, user_id, username, topic_id=None):
     Transfers an item to another user, updating ownership history.
     If quantity is less than the stack size the stack is split; the transferred
     portion keeps the same stack_id and inherits the full history up to this point.
-    If the recipient already holds a stack with the same name and stack_id the
-    quantities are simply merged.
+    The recipient only merges it into a stack with the same name, stack_id,
+    rarity, and ownership history. Incompatible local ID collisions receive a
+    new stack_id.
     """
     if len(args) < 2:
         print("Usage: !item give {item_name} {target} [stack_id [quantity]]")
@@ -195,26 +203,13 @@ def cmd_item_give(args, user_id, username, topic_id=None):
             {"owner": username, "upgrades": []},
         ]
 
-    # Helper: find an existing stack in a given inventory with the same lineage
-    def find_existing(items, name, sid):
-        return next(
-            (it for it in items
-             if it["name"].lower() == name.lower() and it["stack_id"] == sid),
-            None
-        )
-
     target_items = recipient["items"] if recipient else recipient_entity["items"]
 
     if give_qty == match["quantity"]:
         # ── Full stack transfer
         match["history"].append({"owner": recipient_username, "upgrades": []})
         sender["items"].remove(match)
-
-        existing = find_existing(target_items, match["name"], match["stack_id"])
-        if existing:
-            existing["quantity"] += give_qty
-        else:
-            target_items.append(match)
+        transferred_stack = merge_or_append_item_stack(target_items, match)
 
     else:
         # ── Partial transfer — split the stack
@@ -222,23 +217,21 @@ def cmd_item_give(args, user_id, username, topic_id=None):
 
         transferred_history = copy.deepcopy(match["history"])
         transferred_history.append({"owner": recipient_username, "upgrades": []})
-
-        existing = find_existing(target_items, match["name"], match["stack_id"])
-        if existing:
-            existing["quantity"] += give_qty
-        else:
-            target_items.append({
+        transferred_stack = merge_or_append_item_stack(
+            target_items,
+            {
                 "name":     match["name"],
                 "quantity": give_qty,
                 "rarity":   match["rarity"],
                 "stack_id": match["stack_id"],
                 "history":  transferred_history,
-            })
+            },
+        )
 
     Database.save_db(db)
     if recipient_entity:
         Entity.save_entities(entities)
-    print(f"Gave {give_qty}x {match['name']} (#{match['stack_id']}) to {recipient_username}")
+    print(f"Gave {give_qty}x {match['name']} (#{transferred_stack['stack_id']}) to {recipient_username}")
     return True
 
 def cmd_item_delete(args, user_id, username, topic_id=None):
