@@ -2,7 +2,7 @@ import copy
 import config
 from DatabaseLogic.db import Database
 from Entities.entities import Entity
-from Commands.utils import validate_item_name, next_stack_id
+from Commands.utils import validate_item_name, next_stack_id, merge_or_append_item_stack
 
 """
 Entity (business) commands:
@@ -445,27 +445,16 @@ def cmd_buy(args, user_id, username, topic_id=None):
     transferred_history = copy.deepcopy(entity_item.get("history", [{"owner": entity["name"], "upgrades": []}]))
     transferred_history.append({"owner": username, "upgrades": []})
 
-    # Merge into existing buyer stack if same name+stack_id, else create new entry
-    existing = next(
-        (it for it in buyer.get("items", [])
-         if it["name"].lower() == entity_item["name"].lower() and it["stack_id"] == entity_item["stack_id"]),
-        None
-    )
-    if existing:
-        existing["quantity"] += buy_qty
-    else:
-        # Avoid stack_id collision with a different item of the same name in buyer inventory
-        new_stack_id = entity_item["stack_id"]
-        taken = {it["stack_id"] for it in buyer.get("items", []) if it["name"].lower() == entity_item["name"].lower()}
-        if new_stack_id in taken:
-            new_stack_id = next_stack_id(buyer["items"], entity_item["name"])
-        buyer["items"].append({
+    merge_or_append_item_stack(
+        buyer["items"],
+        {
             "name":     entity_item["name"],
             "quantity": buy_qty,
             "rarity":   entity_item["rarity"],
-            "stack_id": new_stack_id,
+            "stack_id": entity_item["stack_id"],
             "history":  transferred_history,
-        })
+        },
+    )
 
     Database.save_db(db)
     Entity.save_entities(entities)

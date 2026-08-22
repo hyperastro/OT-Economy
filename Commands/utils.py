@@ -66,6 +66,45 @@ def next_stack_id(items, item_name):
     max_id = max(int(it["stack_id"]) for it in same_items)
     return f"{max_id+1:04d}"
 
+
+def merge_or_append_item_stack(items, incoming):
+    """Merge an incoming stack only when its identity and lineage match.
+
+    Stack IDs are allocated independently in each inventory, so an ID match by
+    itself does not prove that two stacks contain the same items.  Reusing an ID
+    across different rarities or ownership histories must create a new local
+    stack instead of changing the meaning of the existing stack's quantity.
+    """
+    incoming_history = incoming.get("history")
+
+    merge_target = next(
+        (
+            item
+            for item in items
+            if item["name"].lower() == incoming["name"].lower()
+            and item["stack_id"] == incoming["stack_id"]
+            and item.get("rarity", "").lower()
+            == incoming.get("rarity", "").lower()
+            and incoming_history
+            and item.get("history") == incoming_history
+        ),
+        None,
+    )
+    if merge_target:
+        merge_target["quantity"] += incoming["quantity"]
+        return merge_target
+
+    id_collision = any(
+        item["name"].lower() == incoming["name"].lower()
+        and item["stack_id"] == incoming["stack_id"]
+        for item in items
+    )
+    if id_collision:
+        incoming["stack_id"] = next_stack_id(items, incoming["name"])
+
+    items.append(incoming)
+    return incoming
+
 def next_rarity(current):
     for i, (r, cost) in enumerate(config.RARITY_ORDER):
         if r == current:
