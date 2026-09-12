@@ -2,6 +2,7 @@ import json
 import random
 import math
 from DatabaseLogic.db import Database
+from Telemetry.telemetry import Telemetry
 import config
 
 
@@ -43,6 +44,7 @@ def apply_wealth_tax_tick_based(current_tick):
             tax_amount = round(balance * config.TAX_RATE)
             user["balance"] -= tax_amount
             taxed_users.append((user["username"], tax_amount))
+            Telemetry.log_event("burn", tax_amount, "wealth_tax", meta={"user_id": uid})
             print(f"Wealth tax: {user['username']} paid {tax_amount} OT Bucks (3%)")
 
     if taxed_users:
@@ -53,6 +55,7 @@ def apply_wealth_tax_tick_based(current_tick):
 
     # Snapshot after tax so week-over-week gains comparisons are always fair
     save_balance_snapshot(db)
+    Telemetry.record_weekly_snapshot(db)
 
 
 def calculate_reward_probability(seconds_since_last_post, tau=7200):
@@ -107,12 +110,26 @@ def maybe_reward_user(user_id):
     final_probability = base_probability * (1 + sacred_chance_boost)
 
     # === Rolling window spam penalty (β = 0.75, 10-minute window)
-    # Each additional post within the window reduces probability by 1/n^0.75,
-    # making rapid-fire posting far less efficient than paced posting.
+    # The first SPAM_GRACE_POSTS posts within the window are free — sustained
+    # but paced posting (e.g. 5/min) isn't punished just for having a high
+    # count. Beyond the grace amount, each additional post reduces probability
+    # by 1/over_grace^0.75, but never below SPAM_MIN_PENALTY — a floor stops
+    # very active (but non-bursty) posters from being pushed to ~0% chance.
     recent_times = [t for t in user.get("recent_post_times", []) if now - t < config.SPAM_WINDOW]
     n = len(recent_times) + 1  # +1 counts the current post
-    spam_penalty = 1.0 / (n ** config.SPAM_BETA)
-    final_probability *= spam_penalty
+    over_grace = max(0, n - config.SPAM_GRACE_POSTS)
+    if over_grace == 0:
+        spam_penalty = 1.0
+    else:
+        spam_penalty = max(1.0 / (over_grace ** config.SPAM_BETA), config.SPAM_MIN_PENALTY)
+
+    # === Burst penalty — catches actual spam (sub-MIN_HUMAN_GAP posting),
+    # independent of the 10-minute count. This is what lets us keep the count
+    # penalty lenient above: a bot firing posts every 1-2s gets hit hard here
+    # regardless of n, while a human posting every 10-15s never triggers it.
+    burst_penalty = config.BURST_PENALTY if time_diff < config.MIN_HUMAN_GAP else 1.0
+
+    final_probability *= spam_penalty * burst_penalty
 
     # ===  Reward roll
     recent_times.append(now)   # always record the post, win or lose
@@ -123,11 +140,13 @@ def maybe_reward_user(user_id):
         user["time_since_last_post"] = now
         user["recent_post_times"] = recent_times
         Database.save_db(db)
+        Telemetry.log_event("mint", boosted_reward, "post_reward", meta={"user_id": user_id})
         print(
             f"{user['username']} received {boosted_reward} OT Bucks "
             f"(base={base_reward}, +{total_reward_boost*100:.1f}% reward boost, "
             f"chance +{sacred_chance_boost*100:.1f}% sacred, "
-            f"spam ×{spam_penalty:.2f} [n={n} in window])"
+            f"spam ×{spam_penalty:.2f} [n={n} in window, grace={config.SPAM_GRACE_POSTS}], "
+            f"burst ×{burst_penalty:.2f} [gap={time_diff:.1f}s])"
         )
         return boosted_reward
     else:
@@ -137,7 +156,8 @@ def maybe_reward_user(user_id):
         print(
             f"{user['username']} got no reward "
             f"(p={final_probability:.4f}, sacred +{sacred_chance_boost*100:.1f}%, "
-            f"spam ×{spam_penalty:.2f} [n={n} in window])"
+            f"spam ×{spam_penalty:.2f} [n={n} in window, grace={config.SPAM_GRACE_POSTS}], "
+            f"burst ×{burst_penalty:.2f} [gap={time_diff:.1f}s])"
         )
         return None
 
@@ -154,8 +174,8 @@ from Commands.commands import (
 
 
 
-from API.API import OsuApi   # your existing function
-from ForumUpdate import ForumUpdate  # your update function
+from API.API import OsuApi 
+from ForumUpdate import ForumUpdate  
 from Investments.investments import Investment
 
 
@@ -174,7 +194,7 @@ def tick_loop():
         print(f"\n=== Tick {tick_count} ===")
 
         try:
-            state_changed = False  # <--- Track if anything changed this tick
+            state_changed = False 
 
             # Check for new posts
             new_posts_per_topic = OsuApi.check_new_posts()
